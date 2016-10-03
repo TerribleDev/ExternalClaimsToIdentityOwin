@@ -1,12 +1,12 @@
-﻿using System;
+﻿using GetWordpressOAuthToken.Models;
+using Microsoft.AspNet.Identity;
+using Microsoft.AspNet.Identity.Owin;
+using Microsoft.Owin.Security;
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
 using System.Web.Mvc;
-using Microsoft.AspNet.Identity;
-using Microsoft.AspNet.Identity.Owin;
-using Microsoft.Owin.Security;
-using GetWordpressOAuthToken.Models;
 
 namespace GetWordpressOAuthToken.Controllers
 {
@@ -18,6 +18,12 @@ namespace GetWordpressOAuthToken.Controllers
 
         public ManageController()
         {
+        }
+
+        public string WhatIsMyWordpressToken()
+        {
+            //this shouldnt really exist, but this is a way to view the actual users wordpress token claim
+            return UserManager.GetClaims(this.User.Identity.GetUserId()).Where(a => a.Type.Contains("wordpress:access_token")).Select(a => a.Value).FirstOrDefault() ?? string.Empty;
         }
 
         public ManageController(ApplicationUserManager userManager, ApplicationSignInManager signInManager)
@@ -32,9 +38,9 @@ namespace GetWordpressOAuthToken.Controllers
             {
                 return _signInManager ?? HttpContext.GetOwinContext().Get<ApplicationSignInManager>();
             }
-            private set 
-            { 
-                _signInManager = value; 
+            private set
+            {
+                _signInManager = value;
             }
         }
 
@@ -309,6 +315,25 @@ namespace GetWordpressOAuthToken.Controllers
             return new AccountController.ChallengeResult(provider, Url.Action("LinkLoginCallback", "Manage"), User.Identity.GetUserId());
         }
 
+        private async Task StoreWordpressToken(ApplicationUser user)
+        {
+            var claimsIdentity = await AuthenticationManager.GetExternalIdentityAsync(DefaultAuthenticationTypes.ExternalCookie);
+            if (claimsIdentity != null)
+            {
+                // Retrieve the existing claims for the user and add the FacebookAccessTokenClaim
+                var currentClaims = await UserManager.GetClaimsAsync(user.Id);
+                var wordpressToken = claimsIdentity.Claims.Where(a => a.Type.Contains("wordpress:access_token")).FirstOrDefault();
+                if (wordpressToken != null)
+                {
+                    if (currentClaims.Count(a => a.Type.Contains("wordpress:access_token")) > 0)
+                    {
+                        await UserManager.RemoveClaimAsync(user.Id, wordpressToken);
+                    }
+                    await UserManager.AddClaimAsync(user.Id, wordpressToken);
+                }
+            }
+        }
+
         //
         // GET: /Manage/LinkLoginCallback
         public async Task<ActionResult> LinkLoginCallback()
@@ -319,6 +344,11 @@ namespace GetWordpressOAuthToken.Controllers
                 return RedirectToAction("ManageLogins", new { Message = ManageMessageId.Error });
             }
             var result = await UserManager.AddLoginAsync(User.Identity.GetUserId(), loginInfo.Login);
+            if (result.Succeeded)
+            {
+                var currentUser = await UserManager.FindByIdAsync(User.Identity.GetUserId());
+                await StoreWordpressToken(currentUser);
+            }
             return result.Succeeded ? RedirectToAction("ManageLogins") : RedirectToAction("ManageLogins", new { Message = ManageMessageId.Error });
         }
 
@@ -333,7 +363,8 @@ namespace GetWordpressOAuthToken.Controllers
             base.Dispose(disposing);
         }
 
-#region Helpers
+        #region Helpers
+
         // Used for XSRF protection when adding external logins
         private const string XsrfKey = "XsrfId";
 
@@ -384,6 +415,6 @@ namespace GetWordpressOAuthToken.Controllers
             Error
         }
 
-#endregion
+        #endregion Helpers
     }
 }
